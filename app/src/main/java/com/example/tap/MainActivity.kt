@@ -29,7 +29,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import androidx.lifecycle.lifecycleScope // Importante para corrutinas seguras
+import androidx.lifecycle.lifecycleScope
 import io.socket.client.IO
 import io.socket.client.Socket
 import kotlinx.coroutines.flow.Flow
@@ -38,13 +38,11 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.URISyntaxException
 
-// DataStore
+// DataStore para persistencia de victorias
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "tap_stats")
 
 class GameRepository(private val context: Context) {
-    // CORRECCIÓN: Nombre en camelCase para propiedad privada
     private val winsKey = intPreferencesKey("neon_wins")
-
     val totalWins: Flow<Int> = context.dataStore.data.map { it[winsKey] ?: 0 }
 
     suspend fun incrementWins() {
@@ -52,6 +50,7 @@ class GameRepository(private val context: Context) {
     }
 }
 
+// Modelos de datos
 data class Player(val id: String, val name: String, val score: Int)
 data class GameTarget(val id: String, val x: Float, val y: Float)
 
@@ -65,14 +64,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var socket: Socket
     private lateinit var repo: GameRepository
 
+    // Estados del juego
     private var gameTarget by mutableStateOf<GameTarget?>(null)
     private var playersList by mutableStateOf<List<Player>>(emptyList())
-
-    // CORRECCIÓN: Optimización usando mutableIntStateOf para primitivos (evita el warning de rendimiento)
     private var round by mutableIntStateOf(0)
     private var maxRounds by mutableIntStateOf(15)
-
     private var winnerMessage by mutableStateOf<String?>(null)
+
+    // Estados de conexión
     private var isConnected by mutableStateOf(false)
     private var mySocketId by mutableStateOf("")
 
@@ -80,6 +79,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         repo = GameRepository(this)
+
+        // Inicializamos el socket con la URL proporcionada
         setupSocket()
 
         setContent {
@@ -91,12 +92,13 @@ class MainActivity : ComponentActivity() {
                         .statusBarsPadding()
                         .navigationBarsPadding()
                 ) {
-                    AppNavigation(repo, isConnected, winnerMessage, playersList, round, maxRounds, gameTarget, mySocketId,
+                    AppNavigation(
+                        repo, isConnected, winnerMessage, playersList, round, maxRounds, gameTarget, mySocketId,
                         onJoin = { socket.emit("player:join", it) },
                         onStartGame = { socket.emit("game:start") },
                         onTargetClick = {
                             socket.emit("game:hit", it)
-                            gameTarget = null
+                            gameTarget = null // Feedback instantáneo local
                         }
                     )
                 }
@@ -109,58 +111,105 @@ class MainActivity : ComponentActivity() {
             val opts = IO.Options().apply {
                 forceNew = true
                 reconnection = true
+                // Permitimos tanto websocket como polling para máxima compatibilidad con Localtunnel
                 transports = arrayOf("websocket", "polling")
             }
-            // --- PEGAR URL DE NGROK AQUÍ (Reemplazar con tu URL real) ---
-            socket = IO.socket("https://tentacled-unreliably-elina.ngrok-free.dev", opts)
 
-        } catch (_: URISyntaxException) {
-            // CORRECCIÓN: Usamos "_" para ignorar explícitamente la variable 'e' no usada
+            // URL actualizada proporcionada
+            val serverUrl = "https://tall-words-agree.loca.lt"
+
+            android.util.Log.d("SOCKET_DEBUG", "Iniciando conexión a: $serverUrl")
+            socket = IO.socket(serverUrl, opts)
+
+        } catch (e: URISyntaxException) {
+            android.util.Log.e("SOCKET_DEBUG", "Error de sintaxis en URL", e)
             return
         }
 
+        // --- Listeners de Conexión ---
+
         socket.on(Socket.EVENT_CONNECT) {
-            isConnected = true
-            mySocketId = socket.id()
+            val id = socket.id()
+            android.util.Log.d("SOCKET_DEBUG", "¡CONECTADO! ID: $id")
+            runOnUiThread {
+                isConnected = true
+                mySocketId = id
+            }
         }
+
+        socket.on(Socket.EVENT_CONNECT_ERROR) { args ->
+            val err = if (args.isNotEmpty()) args[0].toString() else "Error desconocido"
+            android.util.Log.e("SOCKET_DEBUG", "ERROR CONEXIÓN: $err")
+            runOnUiThread { isConnected = false }
+        }
+
+        socket.on(Socket.EVENT_DISCONNECT) {
+            android.util.Log.d("SOCKET_DEBUG", "Desconectado del servidor")
+            runOnUiThread { isConnected = false }
+        }
+
+        // --- Listeners del Juego ---
+
         socket.on("game:updatePlayers") { args ->
-            val data = args[0] as JSONObject
-            val list = mutableListOf<Player>()
-            val keys = data.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val obj = data.getJSONObject(key)
-                list.add(Player(key, obj.getString("name"), obj.getInt("score")))
+            try {
+                val data = args[0] as JSONObject
+                val list = mutableListOf<Player>()
+                val keys = data.keys()
+                while (keys.hasNext()) {
+                    // .toString() explícito para evitar error de tipos (Any vs String)
+                    val key = keys.next().toString()
+                    val obj = data.getJSONObject(key)
+                    list.add(Player(key, obj.getString("name"), obj.getInt("score")))
+                }
+                runOnUiThread { playersList = list.sortedByDescending { it.score } }
+            } catch (e: Exception) {
+                android.util.Log.e("SOCKET_DEBUG", "Error parseando players", e)
             }
-            runOnUiThread { playersList = list.sortedByDescending { it.score } }
         }
+
         socket.on("game:spawn") { args ->
-            val data = args[0] as JSONObject
-            val tObj = data.getJSONObject("target")
-            runOnUiThread {
-                gameTarget = GameTarget(tObj.getString("id"), tObj.getDouble("x").toFloat(), tObj.getDouble("y").toFloat())
-                round = data.getInt("round")
-                maxRounds = data.getInt("maxRounds")
-                winnerMessage = null
+            try {
+                val data = args[0] as JSONObject
+                val tObj = data.getJSONObject("target")
+                runOnUiThread {
+                    gameTarget = GameTarget(
+                        tObj.getString("id"),
+                        tObj.getDouble("x").toFloat(),
+                        tObj.getDouble("y").toFloat()
+                    )
+                    round = data.getInt("round")
+                    maxRounds = data.getInt("maxRounds")
+                    winnerMessage = null
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SOCKET_DEBUG", "Error en spawn", e)
             }
         }
+
         socket.on("game:end") { args ->
-            val data = args[0] as JSONObject
-            val wId = data.optString("winnerId")
-            val wName = data.getString("winnerName")
-            runOnUiThread {
-                gameTarget = null
-                winnerMessage = if (wId == mySocketId) {
-                    // CORRECCIÓN: Usamos lifecycleScope en lugar de GlobalScope (Delicate API fix)
-                    lifecycleScope.launch { repo.incrementWins() }
-                    "VICTORY!"
-                } else "WINNER: $wName"
+            try {
+                val data = args[0] as JSONObject
+                val wId = data.optString("winnerId")
+                val wName = data.getString("winnerName")
+                runOnUiThread {
+                    gameTarget = null
+                    winnerMessage = if (wId == mySocketId) {
+                        lifecycleScope.launch { repo.incrementWins() }
+                        "VICTORY!"
+                    } else "WINNER: $wName"
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SOCKET_DEBUG", "Error en game:end", e)
             }
         }
+
         socket.connect()
     }
 
-    override fun onDestroy() { super.onDestroy(); socket.disconnect() }
+    override fun onDestroy() {
+        super.onDestroy()
+        socket.disconnect()
+    }
 }
 
 @Composable
@@ -208,7 +257,9 @@ fun LoginScreen(isConnected: Boolean, totalWins: Int, onJoin: (String) -> Unit) 
             enabled = isConnected && name.isNotBlank(),
             colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
             shape = CutCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth().height(50.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
         ) {
             Text(if (isConnected) "CONNECT SYSTEM" else "OFFLINE", color = Color.Black, fontWeight = FontWeight.Bold)
         }
@@ -224,7 +275,9 @@ fun GameScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         // HUD Superior
         Card(
-            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
             colors = CardDefaults.cardColors(containerColor = NeonDarkPanel),
             border = androidx.compose.foundation.BorderStroke(1.dp, NeonPurple)
         ) {
@@ -236,8 +289,17 @@ fun GameScreen(
                 LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
                     items(players) { p ->
                         val isMe = p.id == mySocketId
-                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(if (isMe) "> ${p.name}" else p.name, color = if (isMe) NeonCyan else Color.Gray, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = if (isMe) "> ${p.name}" else p.name,
+                                color = if (isMe) NeonCyan else Color.Gray,
+                                fontWeight = FontWeight.Bold
+                            )
                             Text("${p.score}", color = NeonCyan, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -255,7 +317,12 @@ fun GameScreen(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(winnerMessage, style = MaterialTheme.typography.headlineMedium, color = NeonPurple, fontWeight = FontWeight.Black)
+                    Text(
+                        winnerMessage,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = NeonPurple,
+                        fontWeight = FontWeight.Black
+                    )
                     Spacer(modifier = Modifier.height(20.dp))
                     Button(onClick = onStartGame, colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)) {
                         Text("RESTART MISSION", color = Color.Black)
@@ -266,7 +333,9 @@ fun GameScreen(
                     onClick = onStartGame,
                     modifier = Modifier.align(Alignment.Center),
                     colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
-                ) { Text("READY?", color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+                ) {
+                    Text("READY?", color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
             } else {
                 gameTarget?.let { t ->
                     val size = 80.dp

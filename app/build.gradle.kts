@@ -58,9 +58,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     // Librerías del Juego
-    implementation("io.socket:socket.io-client:2.0.1") {
-        exclude(group = "org.json", module = "json")
-    }
+    implementation("io.socket:socket.io-client:2.1.1")
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
     // Testing
