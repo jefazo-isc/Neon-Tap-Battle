@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
                 transports = arrayOf("websocket", "polling")
             }
             // --- PEGAR URL DE NGROK AQUÍ (Reemplazar con tu URL real) ---
-            socket = IO.socket("https://TU-URL-NGROK.ngrok-free.dev", opts)
+            socket = IO.socket("https://tentacled-unreliably-elina.ngrok-free.dev", opts)
 
         } catch (_: URISyntaxException) {
             // CORRECCIÓN: Usamos "_" para ignorar explícitamente la variable 'e' no usada
