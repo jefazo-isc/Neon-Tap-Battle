@@ -1,6 +1,5 @@
 package com.example.tap
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Bundle
 import android.util.Log
@@ -9,7 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.* // Importante para BoxWithConstraints
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -25,13 +24,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.times // <--- ¡ESTA ES CLAVE para multiplicar w * t.x!
+import androidx.compose.ui.unit.times
 import androidx.core.view.WindowCompat
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.lifecycle.lifecycleScope
 import io.socket.client.IO
 import io.socket.client.Socket
 import kotlinx.coroutines.flow.Flow
@@ -39,14 +39,18 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.URISyntaxException
-// DataStore con nombre diferente
+
+// DataStore
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "tap_stats")
 
 class GameRepository(private val context: Context) {
-    private val WINS_KEY = intPreferencesKey("neon_wins") // Key distinta
-    val totalWins: Flow<Int> = context.dataStore.data.map { it[WINS_KEY] ?: 0 }
+    // CORRECCIÓN: Nombre en camelCase (winsKey en vez de WINS_KEY)
+    private val winsKey = intPreferencesKey("neon_wins")
+
+    val totalWins: Flow<Int> = context.dataStore.data.map { it[winsKey] ?: 0 }
+
     suspend fun incrementWins() {
-        context.dataStore.edit { it[WINS_KEY] = (it[WINS_KEY] ?: 0) + 1 }
+        context.dataStore.edit { it[winsKey] = (it[winsKey] ?: 0) + 1 }
     }
 }
 
@@ -62,10 +66,14 @@ val NeonDarkPanel = Color(0xFF1E1E1E)
 class MainActivity : ComponentActivity() {
     private lateinit var socket: Socket
     private lateinit var repo: GameRepository
+
     private var gameTarget by mutableStateOf<GameTarget?>(null)
     private var playersList by mutableStateOf<List<Player>>(emptyList())
-    private var round by mutableStateOf(0)
-    private var maxRounds by mutableStateOf(15)
+
+    // CORRECCIÓN: Optimización usando mutableIntStateOf para primitivos
+    private var round by mutableIntStateOf(0)
+    private var maxRounds by mutableIntStateOf(15)
+
     private var winnerMessage by mutableStateOf<String?>(null)
     private var isConnected by mutableStateOf(false)
     private var mySocketId by mutableStateOf("")
@@ -77,11 +85,13 @@ class MainActivity : ComponentActivity() {
         setupSocket()
 
         setContent {
-            // Tema Oscuro forzado
             MaterialTheme(colorScheme = darkColorScheme(background = NeonBlack, primary = NeonCyan)) {
-                Surface(color = NeonBlack, modifier = Modifier.fillMaxSize()
-                    .statusBarsPadding()      // <--- AGREGA ESTA LÍNEA (Baja el contenido)
-                    .navigationBarsPadding()  // <--- AGREGA ESTA LÍNEA (Sube el contenido si la barra de abajo estorba)
+                Surface(
+                    color = NeonBlack,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
                 ) {
                     AppNavigation(repo, isConnected, winnerMessage, playersList, round, maxRounds, gameTarget, mySocketId,
                         onJoin = { socket.emit("player:join", it) },
@@ -104,8 +114,12 @@ class MainActivity : ComponentActivity() {
                 transports = arrayOf("websocket", "polling")
             }
             // --- PEGAR URL DE NGROK AQUÍ ---
-            socket = IO.socket("https://tentacled-unreliably-elina.ngrok-free.dev", opts)
-        } catch (e: URISyntaxException) { return }
+            socket = IO.socket("https://TU-URL-NGROK.ngrok-free.dev", opts)
+
+        } catch (_: URISyntaxException) {
+            // CORRECCIÓN: Usamos "_" para ignorar la variable 'e' no usada
+            return
+        }
 
         socket.on(Socket.EVENT_CONNECT) {
             isConnected = true
@@ -139,7 +153,8 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 gameTarget = null
                 winnerMessage = if (wId == mySocketId) {
-                    kotlinx.coroutines.GlobalScope.launch { repo.incrementWins() }
+                    // CORRECCIÓN: Usamos lifecycleScope en lugar de GlobalScope
+                    lifecycleScope.launch { repo.incrementWins() }
                     "VICTORY!"
                 } else "WINNER: $wName"
             }
@@ -202,7 +217,6 @@ fun LoginScreen(isConnected: Boolean, totalWins: Int, onJoin: (String) -> Unit) 
     }
 }
 
-@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun GameScreen(
     players: List<Player>, round: Int, maxRounds: Int, gameTarget: GameTarget?,
@@ -256,10 +270,13 @@ fun GameScreen(
                 ) { Text("READY?", color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
             } else {
                 gameTarget?.let { t ->
-                    val size = 80.dp // Círculos más grandes
+                    val size = 80.dp
+                    val xPos = w * t.x - (size / 2)
+                    val yPos = h * t.y - (size / 2)
+
                     Box(
                         modifier = Modifier
-                            .offset(x = w * t.x - (size/2), y = h * t.y - (size/2))
+                            .offset(x = xPos, y = yPos)
                             .size(size)
                             .shadow(15.dp, CircleShape, spotColor = NeonCyan)
                             .background(Brush.radialGradient(listOf(NeonCyan, Color.Blue)), CircleShape)
