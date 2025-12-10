@@ -1,8 +1,8 @@
 package com.example.tap
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -17,21 +17,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.times
 import androidx.core.view.WindowCompat
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.lifecycleScope // Importante para corrutinas seguras
 import io.socket.client.IO
 import io.socket.client.Socket
 import kotlinx.coroutines.flow.Flow
@@ -44,7 +42,7 @@ import java.net.URISyntaxException
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "tap_stats")
 
 class GameRepository(private val context: Context) {
-    // CORRECCIÓN: Nombre en camelCase (winsKey en vez de WINS_KEY)
+    // CORRECCIÓN: Nombre en camelCase para propiedad privada
     private val winsKey = intPreferencesKey("neon_wins")
 
     val totalWins: Flow<Int> = context.dataStore.data.map { it[winsKey] ?: 0 }
@@ -70,7 +68,7 @@ class MainActivity : ComponentActivity() {
     private var gameTarget by mutableStateOf<GameTarget?>(null)
     private var playersList by mutableStateOf<List<Player>>(emptyList())
 
-    // CORRECCIÓN: Optimización usando mutableIntStateOf para primitivos
+    // CORRECCIÓN: Optimización usando mutableIntStateOf para primitivos (evita el warning de rendimiento)
     private var round by mutableIntStateOf(0)
     private var maxRounds by mutableIntStateOf(15)
 
@@ -113,11 +111,11 @@ class MainActivity : ComponentActivity() {
                 reconnection = true
                 transports = arrayOf("websocket", "polling")
             }
-            // --- PEGAR URL DE NGROK AQUÍ ---
+            // --- PEGAR URL DE NGROK AQUÍ (Reemplazar con tu URL real) ---
             socket = IO.socket("https://TU-URL-NGROK.ngrok-free.dev", opts)
 
         } catch (_: URISyntaxException) {
-            // CORRECCIÓN: Usamos "_" para ignorar la variable 'e' no usada
+            // CORRECCIÓN: Usamos "_" para ignorar explícitamente la variable 'e' no usada
             return
         }
 
@@ -153,7 +151,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 gameTarget = null
                 winnerMessage = if (wId == mySocketId) {
-                    // CORRECCIÓN: Usamos lifecycleScope en lugar de GlobalScope
+                    // CORRECCIÓN: Usamos lifecycleScope en lugar de GlobalScope (Delicate API fix)
                     lifecycleScope.launch { repo.incrementWins() }
                     "VICTORY!"
                 } else "WINNER: $wName"
@@ -217,6 +215,7 @@ fun LoginScreen(isConnected: Boolean, totalWins: Int, onJoin: (String) -> Unit) 
     }
 }
 
+@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun GameScreen(
     players: List<Player>, round: Int, maxRounds: Int, gameTarget: GameTarget?,
